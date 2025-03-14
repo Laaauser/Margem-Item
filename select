@@ -1,0 +1,413 @@
+select
+  a.pai,
+  a.filho,
+  a.fornecedor,
+  a.produto,
+  a.produtol,
+  a.descricao,
+CAST( coalesce(a.acond::numeric(12,0), 0) AS VARCHAR(20))||' por '||a.simbolo as Acond_1,
+  a.Ult_ent,
+  a.Ult_custo,
+  a.pen_custo,
+  a.ant_custo,
+  a.minimo,
+  (CASE WHEN a.Ult_custo <> 0 THEN (a.minimo * 100) / a.Ult_custo ELSE NULL END) - 100 AS margem_min,
+  a.padrao,
+ (CASE WHEN a.Ult_custo <> 0 THEN (a.padrao * 100) / a.Ult_custo ELSE NULL END) - 100 AS margem_padrao,
+  a.ticket,
+  CASE WHEN a.giro = 9854 then 9999 
+  else a.giro END as giro,
+CASE 
+WHEN  a.giro >= 15 AND a.giro <= 30 THEN 'color:#008000'
+WHEN  a.giro <=  45 AND a.giro >= 30 THEN 'color:#FFA500'
+ELSE 'color:red' END AS _giro__style,
+  a.prazo_entrega,
+  a.Est_disp,
+  a.reservado,
+  a.Valor_estoque,
+  coalesce(a.media_dia,0) as DIA,
+  coalesce(a.Media_30_dias,0) as TRIDIAS,
+  coalesce(a.Media_60_dias,0) as SESDIAS,
+  coalesce(a.Media_30_Ano_Anterior,0) as ANO,
+  a.comprar,
+  (select comissao from produtos where produto = a.produto)as comissao,
+  a.OC_pend,
+  a.OC_fat,
+  a.situacao
+FROM 
+(SELECT 
+q3.fornecedor,
+q3.produto,
+q3.produtol,
+q3.descricao,
+ROUND(q3.Custo::numeric, 2) AS Ult_custo,
+ROUND(q3.Custo2::numeric, 2) AS pen_custo,
+ROUND(q3.Custo3::numeric, 2) AS ant_custo,
+  q3.Est_disp,
+  q3.padrao,
+  q3.pai,
+  q3.filho,
+  q3.localizacao,
+  q3.minimo,
+  q3.media_mensal,
+  q3.reservado,
+  (q3.Est_disp * ROUND(q3.Custo::numeric, 2)) as Valor_estoque,
+  q3.acond,
+  q3.simbolo,
+  q3.maior_venda,
+  q3.Media_30_dias,
+  q3.media_dia,
+  CASE WHEN q3.media_dia::integer <= 0 and q3.Est_disp <> 0 THEN 9854
+  WHEN q3.media_dia::integer <= 0 and q3.Est_disp = 0 THEN 0
+  ELSE coalesce(ROUND((q3.Est_disp/q3.media_dia)),0)
+  END as giro,
+  (select prazo_entrega from fornecedores where id=q3.fornecedor_id) as prazo_entrega,
+  q3.Media_60_dias,
+  q3.comprar,
+  q3.vendida_12_meses,
+  (
+    SELECT SUM(ip.quantidade)
+    FROM itens_pedidos ip
+    JOIN pedidos pe ON pe.id = ip.pedido_id
+    JOIN produtos p ON p.id = ip.produto_id
+    join tipos_pedidos tp on tp.id = pe.tipo_pedido_id
+    WHERE ip.situacao = 'E'
+      AND p.situacao IN ('P', 'A')
+      AND pe.tipo_pedido_id IN (54602032, 991072, 29930647, 54602124, 217042352, 190800800, 562, 211335308)
+      AND pe.data_emissao > (DATE_TRUNC('MONTH', CURRENT_DATE - INTERVAL '1 YEAR' - INTERVAL '30 days'))
+      AND pe.data_emissao <= (DATE_TRUNC('MONTH', CURRENT_DATE - INTERVAL '1 YEAR') + INTERVAL '1 DAY')
+      AND p.id = q3.produto_id
+      AND pe.cliente_id <> 305246
+      and tp.categoria = 'V'
+  ) AS Media_30_Ano_Anterior,
+  
+  (
+ select 'Qtd: '||ult_ent||chr(10)||'NF: '||numero||chr(10)||TO_CHAR(q.data_confirmacao, 'DD/MM/YYYY') as Ult_ent
+  from
+  (select (case when ((case when itdoc.quantidade > 0.0000 
+then itdoc.quantidade / case when itdoc.quantidade::integer = 0 
+then null else itdoc.quantidade::integer end else null end) = 1) 
+then replace(to_char(itdoc.quantidade,'FM9G999G999D'), ',', '.') 
+else replace(to_char(itdoc.quantidade,'FM9G999G999D'), ',', '.')end) as Ult_ent,
+doc.data_emissao,
+doc.data_confirmacao,
+doc.numero
+
+from itens_doc_entradas_saidas itdoc
+join doc_entradas_saidas doc on doc.id=itdoc.documento_id
+join estabelecimentos estab on estab.id = doc.estabelecimento_id
+join pessoas p on p.id = doc.emitente_id
+join especies e on e.id = doc.especie_id
+where produto_id = q3.produto_id
+and data_entrega is not null
+and doc.tipo_emitente ='T'
+and doc.situacao_documento = 'E'
+order by data_entrega desc
+
+limit 1)q
+
+) as Ult_ent,
+
+(
+select 
+array_to_string(array_agg('OC:'||pedido||' Qtd: '||quantidade_pendente||' '||data_requerida||''),chr(10)) as oc
+
+from (select ped.pedido, trim(both '.,' from coalesce(to_char(itpe.quantidade, 'FM9G999G999G990D999'), ''))
+as quantidade_pendente, quantidade_pendente as quant_pendente, case when data_requerida is 
+null then '' else to_char(data_requerida, 'DD/MM/YYYY') end as data_requerida from 
+itens_pedidos itpe join pedidos ped on ped.id = itpe.pedido_id join tipos_pedidos tped 
+on tped.id = ped.tipo_pedido_id 
+where itpe.produto_id = q3.produto_id and tped.categoria = 'C' 
+and ped.situacao in ('P','A') and itpe.situacao in ('P','M','E') order by data_requerida desc nulls last limit 2) q 
+) as OC_pend,
+(
+select 
+array_to_string(array_agg('OC:'||pedido||' Qtd: '||quantidade_pendente||' '||data_requerida||''),chr(10)) as oc
+
+from (select ped.pedido, trim(both '.,' from coalesce(to_char(itpe.quantidade, 'FM9G999G999G990D999'), ''))
+as quantidade_pendente, quantidade_pendente as quant_pendente, case when data_requerida is 
+null then '' else to_char(data_requerida, 'DD/MM/YYYY') end as data_requerida from 
+itens_pedidos itpe join pedidos ped on ped.id = itpe.pedido_id join tipos_pedidos tped 
+on tped.id = ped.tipo_pedido_id left join itens_doc_entradas_saidas itdoc on itdoc.pedido_id = ped.id
+left join doc_entradas_saidas doc on doc.id = itdoc.documento_id 
+where itpe.produto_id = q3.produto_id 
+and tped.categoria = 'C' 
+and ped.data_inclusao > current_date - 30
+and ped.situacao in ('E') and itpe.situacao in ('E') and doc.data_confirmacao is null order by data_requerida desc nulls last limit 2) q 
+) as OC_fat,
+(
+select
+(preco/qtd) as ticket
+from(
+select sum(quantidade) as qtd,sum(valor_total_item)as preco
+from itens_pedidos ip
+join pedidos p on p.id = ip.pedido_id
+join tipos_pedidos tp on tp.id = p.tipo_pedido_id
+where produto_id = q3.produto_id
+and p.situacao not in ('C','M')
+AND ativo = 'S'
+and tipo_pedido not in ('BONIXXX_FLEX','.BONIFICACAO','BONIFICACAOXXX','TROCAXXX','.TROCA','PENDENTES','.BONI_FLEX','COMPRA')
+and data_emissao between (CURRENT_DATE - INTERVAL '10 days') and current_date)q
+) as ticket,
+q3.situacao
+
+FROM (
+  SELECT 
+    q2.localizacao,
+    q2.produto,
+    q2.produtol,
+    q2.pai,
+    q2.filho,
+    q2.descricao,
+    q2.vendida_12_meses,
+    q2.media_mensal,
+    (q2.estoque - q2.reservado )as Est_disp,
+    q2.reservado,
+    q2.comprar,
+    q2.maior_venda,
+    q2.Media_30_dias,
+    CASE
+        WHEN (q2.Media_30_dias/30) <=0 or (q2.Media_30_dias/30) is null THEN 0
+        ELSE ROUND((q2.Media_30_dias/30))
+   END as media_dia,
+    q2.Media_60_dias,
+    q2.fornecedor,
+    q2.fornecedor_id,
+    q2.Custo,
+    q2.Custo2,
+    q2.Custo3,
+    q2.produto_id,
+    (SELECT preco_sugerido FROM itens_colecoes WHERE quantidade_produtos_minima = '0' 
+    AND colecao_id = '18770' AND produto_id = q2.produto_id LIMIT 1) AS padrao,
+    (SELECT preco_minimo_sugerido FROM itens_colecoes WHERE quantidade_produtos_minima = '0' 
+    AND colecao_id = '18770' AND produto_id = q2.produto_id LIMIT 1) AS minimo,
+    q2.simbolo,
+    q2.acond,
+    q2.situacao
+  FROM (
+    SELECT 
+      q1.localizacao,
+      q1.produto,
+       q1.produtol,
+      q1.pai,
+      q1.filho,
+      q1.descricao,
+      q1.vendida_12_meses,
+      q1.media_mensal,
+      q1.estoque,
+      q1.comprar,
+      q1.produto_id,
+      q1.simbolo,
+      q1.acond,
+      (
+        SELECT MAX(ip.quantidade)
+        FROM itens_pedidos ip
+        JOIN pedidos pe ON pe.id = ip.pedido_id
+        JOIN produtos p ON p.id = ip.produto_id
+        join tipos_pedidos tp on tp.id = pe.tipo_pedido_id
+        WHERE ip.situacao = 'E'
+          AND p.situacao IN ('P', 'A')
+          AND pe.tipo_pedido_id IN (54602032, 991072, 29930647, 54602124, 217042352, 190800800, 562, 211335308)
+          AND pe.data_emissao > (DATE_TRUNC('MONTH', CURRENT_DATE - INTERVAL '1 YEAR') + INTERVAL '1 DAY')
+          AND p.id = q1.produto_id
+          AND pe.cliente_id <> 305246
+          and tp.categoria = 'V'
+      ) AS maior_venda,
+      (
+        SELECT p.nome_completo
+        FROM v_custos_produtos cp
+        JOIN movimentos_estoques me ON me.id = cp.ultima_aquisicao_id
+        JOIN itens_doc_entradas_saidas itdoc ON itdoc.id = me.item_documento_id
+        LEFT JOIN doc_entradas_saidas doc ON doc.id = itdoc.documento_id
+         JOIN pessoas p ON p.id = doc.emitente_id
+        LEFT JOIN especies e ON e.id = doc.especie_id
+        
+        WHERE cp.produto_id = q1.produto_id
+      
+        ORDER BY me.data_hora DESC
+        LIMIT 1
+      ) AS fornecedor,
+      (
+        SELECT p.id
+        FROM v_custos_produtos cp
+        JOIN movimentos_estoques me ON me.id = cp.ultima_aquisicao_id
+        JOIN itens_doc_entradas_saidas itdoc ON itdoc.id = me.item_documento_id
+        LEFT JOIN doc_entradas_saidas doc ON doc.id = itdoc.documento_id
+         JOIN pessoas p ON p.id = doc.emitente_id
+        LEFT JOIN especies e ON e.id = doc.especie_id
+        
+        WHERE cp.produto_id = q1.produto_id
+      
+        ORDER BY me.data_hora DESC
+        LIMIT 1
+      ) AS fornecedor_id,
+      (
+    select
+valor_custo_financeiro as custo
+
+from itens_doc_entradas_saidas itdoc
+inner join doc_entradas_saidas doc on doc.id=itdoc.documento_id
+inner join estabelecimentos estab on estab.id = doc.estabelecimento_id
+left join pessoas p on p.id = doc.emitente_id
+left join especies e on e.id = doc.especie_id
+where produto_id = q1.produto_id
+and data_entrega is not null
+and tipo_operacao = 'E'
+and doc.tipo_emitente ='T'
+and itdoc.natureza_operacao_id not in('1416408','4771098','4781669','38600384','38814129')
+order by data_entrega desc
+limit 1
+      ) AS Custo,
+      (
+        select
+valor_custo_financeiro as custo
+
+from itens_doc_entradas_saidas itdoc
+inner join doc_entradas_saidas doc on doc.id=itdoc.documento_id
+inner join estabelecimentos estab on estab.id = doc.estabelecimento_id
+left join pessoas p on p.id = doc.emitente_id
+left join especies e on e.id = doc.especie_id
+where produto_id = q1.produto_id
+and data_entrega is not null
+and tipo_operacao = 'E'
+and doc.tipo_emitente ='T'
+and itdoc.natureza_operacao_id not in('1416408','4771098','4781669','38600384','38814129')
+order by data_entrega desc
+offset 1
+limit 1
+       
+      ) AS Custo2,
+      (
+        select
+valor_custo_financeiro as custo
+
+from itens_doc_entradas_saidas itdoc
+inner join doc_entradas_saidas doc on doc.id=itdoc.documento_id
+inner join estabelecimentos estab on estab.id = doc.estabelecimento_id
+left join pessoas p on p.id = doc.emitente_id
+left join especies e on e.id = doc.especie_id
+where produto_id = q1.produto_id
+and data_entrega is not null
+and tipo_operacao = 'E'
+and doc.tipo_emitente ='T'
+and itdoc.natureza_operacao_id not in('1416408','4771098','4781669','38600384','38814129')
+order by data_entrega desc
+offset 2
+limit 1
+      ) AS Custo3,
+      (
+        SELECT SUM(ip.quantidade)
+        FROM itens_pedidos ip
+        JOIN pedidos pe ON pe.id = ip.pedido_id
+        JOIN produtos p ON p.id = ip.produto_id
+        join tipos_pedidos tp on tp.id = pe.tipo_pedido_id
+        WHERE ip.situacao = 'E'
+          AND p.situacao IN ('P', 'A')
+          AND pe.tipo_pedido_id IN (54602032, 991072, 29930647, 54602124, 217042352, 190800800, 562, 211335308)
+          AND pe.data_emissao >= (CURRENT_DATE - INTERVAL '30 days')
+          AND p.id = q1.produto_id
+          AND pe.vendedor_id <> '26191'
+          and tp.categoria = 'V'
+      ) AS Media_30_dias,
+      (
+        SELECT SUM(ip.quantidade)
+        FROM itens_pedidos ip
+        JOIN pedidos pe ON pe.id = ip.pedido_id
+        JOIN produtos p ON p.id = ip.produto_id
+        join tipos_pedidos tp on tp.id = pe.tipo_pedido_id
+        WHERE ip.situacao = 'E'
+          AND p.situacao IN ('P', 'A')
+          AND pe.tipo_pedido_id IN (54602032, 991072, 29930647, 54602124, 217042352, 190800800, 562, 211335308)
+          AND pe.data_emissao between (CURRENT_DATE - INTERVAL '60 days') and (CURRENT_DATE - INTERVAL '30 days')
+          AND p.id = q1.produto_id
+          and tp.categoria = 'V'
+          AND pe.vendedor_id <> '26191'
+      ) AS Media_60_dias,
+      
+      COALESCE((SELECT sum(ip1.quantidade_pendente)
+       FROM   itens_pedidos ip1
+      JOIN    produtos p1 ON p1.id = ip1.produto_id
+      JOIN    pedidos pe1 ON pe1.id = ip1.pedido_id
+      WHERE    ip1.situacao IN ('P')
+    and p1.descricao not like '%*%'
+    and p1.tipo_item = '00'
+    and ip1.produto_id = q1.id
+    and pe1.tipo_pedido_id <> '561'
+    and pe1.situacao in ('P','T','M')
+    group by p1.produto,p1.descricao,p1.id),0) as reservado,
+    
+    q1.situacao
+    FROM (
+      SELECT
+       q.id,
+        q.simbolo,
+        q.pai,
+        q.filho,
+        q.acond,
+        q.localizacao,
+        q.produto,
+        q.produtol,
+        q.descricao,
+        q.quantidade AS vendida_12_meses,
+        ROUND(q.quantidade / 12) AS media_mensal,
+        COALESCE(
+          (
+            SELECT SUM(ep.estoque_atual)
+            FROM estoques_produtos ep
+            WHERE ep.tipo_estoque_id = 533
+            AND ep.produto_id = q.id
+          ), 
+          0
+        ) AS estoque,
+        q.id AS produto_id,
+        ROUND(q.quantidade / 12) - COALESCE(
+          (
+            SELECT SUM(ep.estoque_atual)
+            FROM estoques_produtos ep
+            WHERE ep.tipo_estoque_id = 533
+            AND ep.produto_id = q.id
+          ), 
+          0
+        ) AS comprar,
+        q.situacao
+      FROM (
+        SELECT
+    tcp1.descricao AS pai,
+       tcp.descricao AS filho,
+          p.localizacao,
+          p.produto,
+          p.situacao,
+          '<a href="CadProdutos?Z_ACTION=VIEW&A_ID=' || p.id || '">' || p.produto || '</a>' as produtol,     
+          p.id,
+          p.descricao,
+          umacond.simbolo,
+          p.quantidade_unidade_acondicionamento as acond,
+          SUM(ip.quantidade) AS quantidade
+        FROM
+          itens_pedidos ip
+          JOIN pedidos pe ON pe.id = ip.pedido_id
+          JOIN produtos p ON p.id = ip.produto_id
+          join tipos_pedidos tp on tp.id = pe.tipo_pedido_id
+          left join unidades_medidas umacond on umacond.id = p.unidade_acondicionamento_id
+          JOIN categorias_produtos cp ON cp.produto_id = p.id
+    JOIN tipos_categorias_produtos tcp ON tcp.id = cp.categoria_id
+    JOIN categorias_produtos cp1 ON cp1.produto_id = p.id
+    JOIN tipos_categorias_produtos tcp1 ON tcp1.id = cp1.categoria_id AND cp1.principal = 'N'
+        WHERE
+          ip.situacao = 'E'
+          AND pe.tipo_pedido_id IN (54602032, 991072, 29930647, 54602124, 217042352, 190800800, 562, 211335308)
+          AND pe.data_emissao > (DATE_TRUNC('MONTH', CURRENT_DATE - INTERVAL '1 YEAR') + INTERVAL '1 DAY')
+          AND pe.cliente_id <> 305246
+          and tp.categoria = 'V'
+          AND cp.principal = 'S'
+    
+    and tcp1.ativo = 'S'
+    and tcp1.descricao is not null
+        GROUP BY
+          ip.produto_id, p.produto, p.descricao,p.id, umacond.simbolo,tcp1.descricao,tcp.descricao
+          order by p.descricao 
+      ) q
+    ) q1
+  ) q2
+) q3
+)a
